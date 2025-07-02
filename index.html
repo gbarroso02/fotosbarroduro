@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerador de Layout de Fotos para Laudos</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" referrerpolicy="no-referrer"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5;
+        }
+        .a4-page-container {
+            width: 210mm;
+            min-height: 297mm;
+            height: 297mm;
+            margin: 20px auto;
+            background-color: white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            padding: 0;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: visible;
+
+            /* NOVO: Usar o papel timbrado como background */
+            background-image: url('imagens/MODELO UNIÃO (1).png');
+            background-size: 210mm 297mm; /* Ajusta a imagem para o tamanho exato da página A4 */
+            background-repeat: no-repeat;
+            background-position: center top; /* Garante que a imagem comece no topo e centro */
+        }
+        .a4-page-container + .a4-page-container {
+            margin-top: 30px;
+        }
+        /* REMOVIDO: .report-header-img-container e .report-header-img
+           Porque a imagem agora é background da página .a4-page-container */
+        .report-header-img-container, .report-footer-img-container {
+             display: none; /* Oculta os containers de imagem, já que o timbrado é o background da página inteira */
+        }
+
+        .report-body {
+            flex-grow: 1;
+            /* Ajuste o padding-top e padding-bottom para não sobrepor o timbrado.
+               Você pode precisar ajustar estes valores (por exemplo, 30mm e 35mm)
+               dependendo do espaço ocupado pelo cabeçalho e rodapé na sua imagem timbrada. */
+            padding: 45mm 15mm 45mm 15mm; /* Ajustado padding superior e inferior */
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            position: relative; /* Para garantir que o z-index funcione se precisar */
+            z-index: 1; /* Garante que o conteúdo fique acima do background */
+        }
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8mm 7mm;
+            width: 100%;
+        }
+        .image-container {
+            width: 100%;
+            padding-top: 75%;
+            position: relative;
+            border: 1px solid #ccc;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .image-container img, .image-container .error-placeholder {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* CORREÇÃO: Alterado de 'cover' para 'contain' para evitar cortes */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            color: #666;
+        }
+        /* REMOVIDO: .report-footer-img-container e .report-footer-img
+           Porque a imagem agora é background da página .a4-page-container */
+
+        .page-indicator {
+            position: absolute;
+            bottom: 26mm;
+            width: calc(100% - 30mm);
+            left: 15mm;
+            text-align: center;
+            font-size: 0.8rem;
+            color: #333;
+            padding: 2mm 0;
+            z-index: 10;
+        }
+        /* Oculta o indicador de página ao imprimir ou exportar para PDF */
+        .page-indicator.for-export-or-print {
+            display: none !important;
+        }
+
+        @media print {
+            body { background-color: white; margin: 0; padding: 0; }
+            .controls-container, .action-buttons-container, .preview-title { display: none !important; }
+            .a4-page-container {
+                width: 100%; height: 297mm;
+                min-height: 297mm;
+                margin: 0; box-shadow: none;
+                page-break-after: always;
+                overflow: visible !important;
+                /* Importante para a impressão e PDF: garante que o background é incluído */
+                -webkit-print-color-adjust: exact !important; /* Para Webkit (Chrome, Edge) */
+                color-adjust: exact !important; /* Padrão */
+            }
+            .a4-page-container:last-child { page-break-after: avoid; }
+            .report-body {
+                /* Mantém os paddings para a impressão também */
+                padding: 45mm 15mm 45mm 15mm;
+            }
+            /* Garante que o indicador de página não apareça na impressão */
+            .page-indicator {
+                display: none !important;
+            }
+        }
+
+        .controls-container { max-width: 800px; margin: 30px auto; padding: 25px; background-color: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .controls-container h1 { font-size: 1.8rem; font-weight: bold; color: #333; margin-bottom: 20px; text-align: center; }
+        .form-label { display: block; margin-bottom: 8px; font-weight: 600; color: #555; }
+        .form-input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; margin-bottom: 15px; transition: border-color 0.3s; }
+        .form-input:focus { border-color: #D92329; outline: none; }
+        .file-input-label { display: inline-block; padding: 10px 15px; background-color: #D92329; color: white; border-radius: 6px; cursor: pointer; transition: background-color 0.3s; text-align: center; }
+        .file-input-label:hover { background-color: #b81d22; }
+        input[type="file"] { display: none; }
+        .image-preview-info { margin-top: 10px; font-size: 0.9rem; color: #777; }
+        .error-message { color: red; font-size: 0.9rem; margin-top: 5px; margin-bottom:10px; }
+        .action-buttons-container { text-align: center; margin: 20px auto 30px auto; display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;}
+        .action-button { padding: 12px 25px; color: white; font-size: 1.1rem; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; transition: background-color 0.3s; }
+        .view-button { background-color: #007bff; }
+        .view-button:hover { background-color: #0056b3; }
+        .print-button { background-color: #6f42c1; }
+        .print-button:hover { background-color: #5a349c; }
+        .pdf-button { background-color: #28a745; }
+        .pdf-button:hover { background-color: #218838; }
+        .jpg-button { background-color: #ffc107; color: #212529;}
+        .jpg-button:hover { background-color: #e0a800; }
+        .preview-title { text-align: center; font-size: 1.5rem; font-weight: bold; color: #333; margin-top: 30px; margin-bottom: 10px; }
+        .loader {
+            border: 5px solid #f3f3f3; border-top: 5px solid #D92329;
+            border-radius: 50%; width: 40px; height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto; display: none;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <div class="controls-container">
+        <h1>Gerador de Layout para Laudos</h1>
+        <div>
+            <label for="patientNameInput" class="form-label">Nome do Paciente (para nome do ficheiro):</label>
+            <input type="text" id="patientNameInput" class="form-input" placeholder="Digite o nome completo do paciente">
+        </div>
+        <div>
+            <label for="imageUpload" class="form-label">Upload de Imagens (JPG, BMP - Mínimo 2):</label>
+            <label for="imageUpload" class="file-input-label">Selecionar Ficheiros</label>
+            <input type="file" id="imageUpload" accept=".jpg, .jpeg, .bmp" multiple>
+            <div id="imagePreviewInfo" class="image-preview-info">Nenhuma imagem selecionada.</div>
+            <div id="imageError" class="error-message"></div>
+        </div>
+    </div>
+
+    <div class="action-buttons-container">
+        <button id="viewButton" class="action-button view-button">Visualizar Laudo</button>
+        <button id="printButton" class="action-button print-button">Imprimir Laudo</button>
+        <button id="downloadPdfButton" class="action-button pdf-button">Baixar Laudo em PDF</button>
+        <button id="downloadJpgButton" class="action-button jpg-button">Baixar Laudo em JPG(s)</button>
+    </div>
+    <div id="loader" class="loader"></div>
+
+    <h2 id="previewTitle" class="preview-title" style="display: none;">Pré-visualização do Laudo</h2>
+    <div id="printableReportContainer">
+    </div>
+
+    <script>
+        // Esta verificação ainda é útil para depuração, mesmo sem os atributos de integridade.
+        if (typeof html2canvas === 'undefined' || typeof jspdf === 'undefined') {
+            console.error("ERRO CRÍTICO: Bibliotecas html2canvas ou jspdf não foram carregadas. Verifique os links CDN.");
+            alert("ERRO CRÍTICO: Falha ao carregar bibliotecas essenciais. A funcionalidade de exportação não funcionará. Verifique a consola para detalhes.");
+        }
+        const { jsPDF } = window.jspdf;
+
+        const patientNameInput = document.getElementById('patientNameInput');
+        const imageUpload = document.getElementById('imageUpload');
+        const printableReportContainer = document.getElementById('printableReportContainer');
+        const imagePreviewInfo = document.getElementById('imagePreviewInfo');
+        const imageError = document.getElementById('imageError');
+        const viewButton = document.getElementById('viewButton');
+        const printButton = document.getElementById('printButton');
+        const downloadPdfButton = document.getElementById('downloadPdfButton');
+        const downloadJpgButton = document.getElementById('downloadJpgButton');
+        const previewTitle = document.getElementById('previewTitle');
+        const loader = document.getElementById('loader');
+
+        // Caminho para a imagem única do papel timbrado
+        const letterheadImageSrc = 'imagens/MODELO UNIÃO (1).png';
+
+        let selectedFiles = [];
+
+        imageUpload.addEventListener('change', (event) => {
+            let allFiles = Array.from(event.target.files);
+            imageError.textContent = '';
+            if (allFiles.length === 0) {
+                imagePreviewInfo.textContent = 'Nenhuma imagem selecionada.';
+                selectedFiles = [];
+                printableReportContainer.innerHTML = '';
+                previewTitle.style.display = 'none';
+                return;
+            }
+            // Filtro para aceitar apenas JPG, JPEG, BMP
+            selectedFiles = allFiles.filter(file =>
+                file.type.startsWith('image/jpeg') ||
+                file.type.startsWith('image/jpg') ||
+                file.type.startsWith('image/bmp')
+            );
+            const nonAcceptedCount = allFiles.length - selectedFiles.length;
+            if (selectedFiles.length === 0) {
+                imagePreviewInfo.textContent = 'Nenhuma imagem JPG/BMP válida selecionada.';
+                if (nonAcceptedCount > 0) imageError.textContent = `Foram selecionados ${nonAcceptedCount} ficheiro(s) com formato não suportado.`;
+                printableReportContainer.innerHTML = ''; previewTitle.style.display = 'none'; return;
+            }
+            let infoText = `${selectedFiles.length} imagem(ns) válida(s) selecionada(s).`;
+            if (nonAcceptedCount > 0) infoText += ` (${nonAcceptedCount} ficheiro(s) não suportados foram ignorados.)`;
+            imagePreviewInfo.textContent = infoText;
+            printableReportContainer.innerHTML = ''; previewTitle.style.display = 'none';
+        });
+
+        async function generateReportPages(isForExportOrPrint = false) {
+            if (selectedFiles.length < 2 && !isForExportOrPrint) {
+                imageError.textContent = 'Por favor, selecione pelo menos 2 imagens.'; return false;
+            }
+            printableReportContainer.innerHTML = '';
+
+            let imagesToProcess = [...selectedFiles];
+            const totalImages = imagesToProcess.length;
+
+            if (totalImages === 0) {
+                if (!isForExportOrPrint) imageError.textContent = 'Nenhuma imagem selecionada para visualizar.';
+                return false;
+            }
+
+            let pagesData = [];
+            if (totalImages === 7) {
+                pagesData.push(imagesToProcess.slice(0, 4));
+                pagesData.push(imagesToProcess.slice(4, 7));
+            } else {
+                let currentIndex = 0;
+                while (currentIndex < totalImages) {
+                    pagesData.push(imagesToProcess.slice(currentIndex, currentIndex + 6));
+                    currentIndex += 6;
+                }
+                // Lógica para redistribuir imagens da última página para a penúltima
+                if (pagesData.length > 1) {
+                    const lastPageIndex = pagesData.length - 1;
+                    const secondLastPageIndex = pagesData.length - 2;
+                    if (pagesData[lastPageIndex].length === 1 && pagesData[secondLastPageIndex].length > 1) {
+                        const imageToMove = pagesData[secondLastPageIndex].pop();
+                        pagesData[lastPageIndex].unshift(imageToMove);
+                    }
+                }
+            }
+
+            if (pagesData.length > 0) {
+                previewTitle.style.display = 'block';
+                const pageCreationPromises = pagesData.map((pageFiles, index) => {
+                    const currentPageNum = index + 1;
+                    const totalNumPages = pagesData.length;
+                    return createA4PageElement(pageFiles, currentPageNum, totalNumPages, isForExportOrPrint);
+                });
+
+                try {
+                    const createdPageElements = await Promise.all(pageCreationPromises);
+                    createdPageElements.forEach(a4Page => {
+                        if(a4Page) printableReportContainer.appendChild(a4Page);
+                    });
+                } catch (error) {
+                    console.error("Erro CRÍTICO durante a criação das páginas do laudo:", error);
+                    imageError.textContent = "Erro ao criar páginas. Verifique a consola.";
+                    previewTitle.style.display = 'none';
+                    return false;
+                }
+            }
+
+            if (printableReportContainer.children.length > 0) {
+                if (!isForExportOrPrint) {
+                    setTimeout(() => {
+                        printableReportContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 100);
+                }
+                return true;
+            }
+            return false;
+        }
+
+        viewButton.addEventListener('click', async () => await generateReportPages(false));
+
+        printButton.addEventListener('click', async () => {
+            if (printableReportContainer.children.length === 0) {
+                const pagesWereGenerated = await generateReportPages(true);
+                if (!pagesWereGenerated) {
+                    alert(`Por favor, selecione as imagens antes de imprimir.`);
+                    return;
+                }
+                await new Promise(resolve => setTimeout(resolve, 700));
+            }
+            window.print();
+        });
+
+        async function exportPages(format) {
+            const patientNameForFile = patientNameInput.value.trim().replace(/\s+/g, '_') || 'Laudo_SemNome';
+            if (patientNameInput.value.trim() === "") {
+                alert("Por favor, insira o nome do paciente para nomear o ficheiro antes de baixar.");
+                patientNameInput.focus();
+                return;
+            }
+
+            // Garante que as páginas estejam geradas e prontas para exportação
+            if (printableReportContainer.children.length === 0) {
+                const pagesWereGenerated = await generateReportPages(true);
+                if (!pagesWereGenerated) {
+                    alert(`Por favor, selecione as imagens antes de baixar em ${format.toUpperCase()}.`);
+                    return;
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000)); // Aumentado o atraso aqui
+            }
+
+            const reportPages = printableReportContainer.querySelectorAll('.a4-page-container');
+            if (reportPages.length === 0) {
+                alert(`Nenhum conteúdo para gerar ${format.toUpperCase()}.`);
+                return;
+            }
+
+            loader.style.display = 'block';
+            viewButton.disabled = true;
+            printButton.disabled = true;
+            downloadPdfButton.disabled = true;
+            downloadJpgButton.disabled = true;
+
+            try {
+                if (format === 'pdf') {
+                    const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+                    for (let i = 0; i < reportPages.length; i++) {
+                        const pageElement = reportPages[i];
+                        // Desativa o indicador de página para a captura do PDF
+                        const pageIndicator = pageElement.querySelector('.page-indicator');
+                        if (pageIndicator) {
+                            pageIndicator.classList.add('for-export-or-print');
+                        }
+
+                        // Aguarda explicitamente o carregamento de todas as imagens DENTRO de cada página
+                        const imagesInPage = Array.from(pageElement.querySelectorAll('img'));
+                        await Promise.all(imagesInPage.map(img => img.complete ? Promise.resolve() : new Promise(resolve => {
+                            img.onload = () => resolve(true);
+                            img.onerror = () => { console.warn(`Erro ao carregar imagem para html2canvas: ${img.src}`); resolve(false); };
+                        })));
+
+                        // Garante que o overflow seja visível para a captura
+                        pageElement.style.overflow = 'visible';
+
+                        const canvas = await html2canvas(pageElement, {
+                            scale: 2, // Aumenta a escala para melhor qualidade no PDF
+                            useCORS: true,
+                            logging: false,
+                            imageTimeout: 15000, // Tempo limite para carregamento de imagens
+                            scrollY: -window.scrollY // Ajuda com problemas de rolagem
+                        });
+                        const imgData = canvas.toDataURL('image/png');
+                        if (i > 0) pdf.addPage();
+                        pdf.addImage(imgData, 'PNG', 0, 0, pdf.internal.pageSize.getWidth(), pdf.internal.pageSize.getHeight());
+
+                        // Restaura o overflow e o indicador de página após a captura
+                        pageElement.style.overflow = 'hidden';
+                        if (pageIndicator) {
+                            pageIndicator.classList.remove('for-export-or-print');
+                        }
+                    }
+                    pdf.save(`${patientNameForFile}.pdf`);
+                } else if (format === 'jpg') {
+                    for (let i = 0; i < reportPages.length; i++) {
+                        const pageElement = reportPages[i];
+                        // Desativa o indicador de página para a captura do JPG
+                        const pageIndicator = pageElement.querySelector('.page-indicator');
+                        if (pageIndicator) {
+                            pageIndicator.classList.add('for-export-or-print');
+                        }
+
+                        const imagesInPage = Array.from(pageElement.querySelectorAll('img'));
+                        await Promise.all(imagesInPage.map(img => img.complete ? Promise.resolve() : new Promise(resolve => {
+                            img.onload = () => resolve(true);
+                            img.onerror = () => { console.warn(`Erro ao carregar imagem para html2canvas: ${img.src}`); resolve(false); };
+                        })));
+
+                        pageElement.style.overflow = 'visible';
+
+                        const canvas = await html2canvas(pageElement, {
+                            scale: 2,
+                            useCORS: true,
+                            logging: false,
+                            imageTimeout: 15000,
+                            scrollY: -window.scrollY
+                        });
+                        const imgData = canvas.toDataURL('image/jpeg', 0.9);
+
+                        const link = document.createElement('a');
+                        link.href = imgData;
+                        const pageNumberText = reportPages.length > 1 ? `_Pagina_${i + 1}` : '';
+                        link.download = `${patientNameForFile}${pageNumberText}.jpg`;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        if (i < reportPages.length - 1) await new Promise(resolve => setTimeout(resolve, 300));
+
+                        // Restaura o overflow e o indicador de página após a captura
+                        pageElement.style.overflow = 'hidden';
+                        if (pageIndicator) {
+                            pageIndicator.classList.remove('for-export-or-print');
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error(`ERRO AO GERAR ${format.toUpperCase()}:`, error);
+                alert(`Ocorreu um erro ao gerar ${format.toUpperCase()}. Verifique a consola para detalhes técnicos.`);
+            } finally {
+                loader.style.display = 'none';
+                viewButton.disabled = false;
+                printButton.disabled = false;
+                downloadPdfButton.disabled = false;
+                downloadJpgButton.disabled = false;
+            }
+        }
+
+        downloadPdfButton.addEventListener('click', async () => await exportPages('pdf'));
+        downloadJpgButton.addEventListener('click', async () => await exportPages('jpg'));
+
+        // Função auxiliar para carregar imagens e tratar erros (mantida, mas não usada para o timbrado agora)
+        function loadImage(imgElement, src, altText, errorAltText, consoleWarnMsg) {
+            return new Promise((resolve) => {
+                imgElement.onload = () => resolve(true);
+                imgElement.onerror = () => {
+                    imgElement.alt = errorAltText;
+                    console.warn(consoleWarnMsg + src);
+                    resolve(false);
+                };
+                imgElement.src = src;
+                imgElement.alt = altText;
+            });
+        }
+
+        // Função para criar um elemento de página A4
+        async function createA4PageElement(imagesForThisPage, currentPageNum, totalNumPages, isForExportOrPrint) {
+            const pageDiv = document.createElement('div');
+            pageDiv.classList.add('a4-page-container');
+
+            // REMOVIDO: Elementos de cabeçalho e rodapé (headerContainer, headerImg, footerContainer, footerImg)
+            // Eles não são mais necessários, pois a imagem do papel timbrado é o background da pageDiv
+
+            // Corpo do relatório (grade de imagens)
+            const main = document.createElement('main');
+            main.classList.add('report-body');
+            const imageGrid = document.createElement('div');
+            imageGrid.classList.add('image-grid');
+
+            const reportImageLoadPromises = imagesForThisPage.map((file, idx) => {
+                return new Promise((resolve) => {
+                    const imageContainer = document.createElement('div');
+                    imageContainer.classList.add('image-container');
+                    const imgElement = document.createElement('img');
+
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        imgElement.src = e.target.result;
+                        imgElement.alt = `Imagem ${idx+1} do exame`;
+                        imageContainer.appendChild(imgElement);
+                        resolve(true);
+                    };
+                    reader.onerror = (errorEvent) => {
+                        console.error(`Erro no FileReader para o ficheiro: ${file.name}`, errorEvent);
+                        const errorPlaceholder = document.createElement('div');
+                        errorPlaceholder.classList.add('error-placeholder');
+                        errorPlaceholder.textContent = `Erro IMG ${idx+1}`;
+                        imageContainer.appendChild(errorPlaceholder);
+                        resolve(false);
+                    };
+                    reader.readAsDataURL(file);
+                    imageGrid.appendChild(imageContainer);
+                });
+            });
+            main.appendChild(imageGrid);
+
+            // Indicador de página (apenas para visualização na tela)
+            let pageIndicatorEl = null;
+            if (totalNumPages > 1) {
+                pageIndicatorEl = document.createElement('div');
+                pageIndicatorEl.classList.add('page-indicator');
+                pageIndicatorEl.textContent = `Página ${currentPageNum} de ${totalNumPages}`;
+                // Adiciona uma classe para controlar a visibilidade em exportação/impressão
+                if (isForExportOrPrint) {
+                    pageIndicatorEl.classList.add('for-export-or-print');
+                }
+            }
+
+            // Adiciona os elementos à página
+            // Removidos headerContainer e footerContainer daqui
+            pageDiv.appendChild(main);
+            if (pageIndicatorEl) pageDiv.appendChild(pageIndicatorEl);
+
+            // NÃO HÁ MAIS headerPromise ou footerPromise aqui, pois o timbrado é um background CSS
+
+            return pageDiv;
+        }
+    </script>
+</body>
+</html>
